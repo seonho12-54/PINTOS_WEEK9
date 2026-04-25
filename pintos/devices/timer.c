@@ -32,6 +32,13 @@ static void real_time_sleep (int64_t num, int32_t denom);
 // list.h에 있는 구조체를 활용하여 queue(linked_list) 방식으로 구현 
 static struct list sleep_list; 
 
+static bool compare_wakeup_tick(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+	const struct thread *thread_a = list_entry(a, struct thread, elem);
+	const struct thread *thread_b = list_entry(b, struct thread, elem);
+	return thread_a->wakeup_tick < thread_b->wakeup_tick;
+}
+
+
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -40,6 +47,8 @@ timer_init (void) {
 	/* 8254 input frequency divided by TIMER_FREQ, rounded to
 	   nearest. */
 	uint16_t count = (1193180 + TIMER_FREQ / 2) / TIMER_FREQ;
+
+	list_init(&sleep_list);// sleep_list 초기화
 
 	outb (0x43, 0x34);    /* CW: counter 0, LSB then MSB, mode 2, binary. */
 	outb (0x40, count & 0xff);
@@ -107,8 +116,9 @@ timer_sleep (int64_t ticks) {
 	cur->wakeup_tick = start + ticks; 
 	
 	// 2. sleep_list에 현재 스레드 삽입
-	list_push_back(&sleep_list, &cur->elem);
-
+	list_insert_ordered(&sleep_list, &cur->elem, compare_wakeup_tick, NULL);
+	//일단 전부다 넣어넣고 이렇게 되면 순서없이 쌓인다.
+	//
     // 3. thread_block();
 	thread_block();
 	intr_set_level(old_level); 
@@ -145,6 +155,15 @@ timer_print_stats (void) {
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
+	struct list_elem *e = list_begin(&sleep_list);
+	while (e != list_end(&sleep_list)) {
+		struct thread *t = list_entry(e, struct thread, elem);
+		if (t->wakeup_tick > ticks) {
+			break; // 아직 깨워야 할 스레드가 남아있다면 반복문
+		}
+		e = list_remove(e); // 깨워야 할 스레드가 없으면 리스트
+		thread_unblock(t); // 스레드 깨우기
+	}
 	thread_tick ();
 }
 
