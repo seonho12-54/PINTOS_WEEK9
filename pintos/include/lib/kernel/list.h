@@ -102,7 +102,7 @@ struct list {
    file for an example. */
 #define list_entry(LIST_ELEM, STRUCT, MEMBER)           \
 	((STRUCT *) ((uint8_t *) &(LIST_ELEM)->next     \
-		- offsetof (STRUCT, MEMBER.next)))
+		- offsetof (STRUCT, MEMBER.next)))   // 
 
 void list_init (struct list *);
 
