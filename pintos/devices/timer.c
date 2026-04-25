@@ -31,7 +31,7 @@ static void real_time_sleep (int64_t num, int32_t denom);
 
 // list.h에 있는 구조체를 활용하여 queue(linked_list) 방식으로 구현 
 static struct list sleep_list; 
-static bool thread_compare_wakeup(struct list_elem *a, struct list_elem *b, void *aux);
+static bool thread_compare_wakeup(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
@@ -47,6 +47,7 @@ timer_init (void) {
 	outb (0x40, count >> 8);
 
 	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+	list_init(&sleep_list); //만들었던 sleep_list 초기화
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -92,7 +93,7 @@ timer_elapsed (int64_t then) {
 }
 
 static bool
-thread_compare_wakeup(struct list_elem *a, struct list_elem *b, void *aux UNUSED)  // typedef bool list_less_func 을 정렬기준 함수의 형태로 정의함. 그래서 이렇게 생김.
+thread_compare_wakeup(const struct list_elem *a,const struct list_elem *b, void *aux UNUSED)  // typedef bool list_less_func 을 정렬기준 함수의 형태로 정의함. 그래서 이렇게 생김.
 {
 	struct thread *ta = list_entry(a, struct thread, elem);
 	struct thread *tb = list_entry(b, struct thread, elem);
@@ -119,6 +120,10 @@ timer_sleep (int64_t ticks) {
 	
 	// 2. sleep_list에 현재 스레드 삽입 (정렬 기준은 wakeup, 정렬하면서 삽입하는 list_insert_ordered로 삽입할것임)
 	list_insert_ordered(&sleep_list, &cur->elem, thread_compare_wakeup, NULL);
+	printf("[sleep] name=%s wakeup_tick=%lld list_size=%zu\n",
+       cur->name,
+       cur->wakeup_tick,
+       list_size(&sleep_list));
 
     // 3. thread_block();
 	thread_block();
