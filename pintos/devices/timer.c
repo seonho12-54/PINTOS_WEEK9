@@ -120,10 +120,6 @@ timer_sleep (int64_t ticks) {
 	
 	// 2. sleep_list에 현재 스레드 삽입 (정렬 기준은 wakeup, 정렬하면서 삽입하는 list_insert_ordered로 삽입할것임)
 	list_insert_ordered(&sleep_list, &cur->elem, thread_compare_wakeup, NULL);
-	printf("[sleep] name=%s wakeup_tick=%lld list_size=%zu\n",
-       cur->name,
-       cur->wakeup_tick,
-       list_size(&sleep_list));
 
     // 3. thread_block();
 	thread_block();
@@ -163,6 +159,17 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
+
+	while (!list_empty(&sleep_list)) {
+		struct list_elem *a = list_front(&sleep_list);
+		struct thread *t = list_entry(a, struct thread, elem);
+		if (t->wakeup_tick > ticks){
+			break;
+		}else{
+			list_pop_front(&sleep_list);
+			thread_unblock(t);
+		}
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
