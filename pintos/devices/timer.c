@@ -99,7 +99,7 @@ thread_compare_wakeup(const struct list_elem *a,const struct list_elem *b, void 
 	struct thread *tb = list_entry(b, struct thread, elem);
 
 	return ta->wakeup_tick < tb->wakeup_tick;
-};
+}
 
 
 /* Suspends execution for approximately TICKS timer ticks. */

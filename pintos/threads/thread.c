@@ -62,6 +62,7 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+static bool thread_compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -210,6 +211,15 @@ thread_create (const char *name, int priority,
 	return tid;
 }
 
+static bool
+thread_compare_priority(const struct list_elem *a,const struct list_elem *b, void *aux UNUSED)  // typedef bool list_less_func 을 정렬기준 함수의 형태로 정의함. 그래서 이렇게 생김.
+{
+	struct thread *ta = list_entry(a, struct thread, elem);
+	struct thread *tb = list_entry(b, struct thread, elem);
+
+	return ta->priority > tb->priority;
+}
+
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -240,7 +250,8 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	//여기에 priority로 정렬하면서 ready_list에 삽입하기
+	list_insert_ordered(&ready_list, &t->elem, thread_compare_priority, NULL);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -303,7 +314,7 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		list_insert_ordered(&ready_list, &curr->elem, thread_compare_priority, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
