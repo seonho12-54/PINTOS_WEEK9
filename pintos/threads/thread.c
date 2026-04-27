@@ -219,6 +219,8 @@ thread_create (const char *name, int priority,
 
 	/* Add to run queue. */
 	thread_unblock (t);
+	if (thread_current()->priority < t->priority)
+		thread_yield();
 
 	return tid;
 }
@@ -248,7 +250,7 @@ thread_block (void) {
    update other data. */
 void
 thread_unblock (struct thread *t) {
-	bool need_yield = false;
+	//bool need_yield = false;
 	enum intr_level old_level;
 
 	ASSERT (is_thread (t));
@@ -262,12 +264,13 @@ thread_unblock (struct thread *t) {
 	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
 	t->status = THREAD_READY;
 	// 인터럽트를 다시 켜기 전에, 현재 스레드의 priority랑 비교하는 로직 추가. 그 동안 인터럽트가 발생하면 안되기 때문
-	if (thread_current()->priority < t->priority){
-		need_yield=true;
-	}
+	// if (thread_current()->priority < t->priority)
+	// 	need_yield=true;
+
 	intr_set_level (old_level);
-	if (need_yield)
-		thread_yield();
+
+	// if (need_yield)
+	// 	thread_yield(); yield에서도 인터럽트를 끄기 때문에, 로직이 꼬인듯, create함수에만 추가하기로.
 }
 
 /* Returns the name of the running thread. */
@@ -341,8 +344,8 @@ void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
 	struct list_elem *a = list_front(&ready_list);
-	struct thread *ta = list_entry(a, struct thread, elem);
-	if (thread_current()->priority < ta->priority ){
+	struct thread *ta = list_entry(a, struct thread, elem); 
+	if (thread_current()->priority < ta->priority ){ //priority_change테스트 통과하는 핵심 로직
 		thread_yield();
 	}
 }
