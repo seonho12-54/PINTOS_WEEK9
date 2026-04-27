@@ -170,7 +170,7 @@ timer_interrupt (struct intr_frame *args UNUSED) {
 	// 조건을 만족하는 스레드는 하나만이 아니라 연속 구간 전체를 반복 처리한다.
 	while (!list_empty (&sleep_list)
 		&& list_entry (list_front (&sleep_list), struct thread, elem)->wakeup_tick <= ticks) {
-		// 깨울 때는 리스트에서 제거한 뒤 thread_unblock()으로 READY 전이한다.
+		// 깨울 때는 sleep리스트에서 제거한 뒤 thread_unblock()으로 READY 전이한다.
 		struct thread *t = list_entry (list_pop_front (&sleep_list), struct thread, elem);
 		thread_unblock (t);
 	}

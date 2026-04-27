@@ -53,6 +53,7 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+bool need_yield;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -247,6 +248,7 @@ thread_block (void) {
    update other data. */
 void
 thread_unblock (struct thread *t) {
+	bool need_yield = false;
 	enum intr_level old_level;
 
 	ASSERT (is_thread (t));
@@ -258,9 +260,14 @@ thread_unblock (struct thread *t) {
 	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
 	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
 	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
-	
 	t->status = THREAD_READY;
+	// 인터럽트를 다시 켜기 전에, 현재 스레드의 priority랑 비교하는 로직 추가. 그 동안 인터럽트가 발생하면 안되기 때문
+	if (thread_current()->priority < t->priority){
+		need_yield=true;
+	}
 	intr_set_level (old_level);
+	if (need_yield)
+		thread_yield();
 }
 
 /* Returns the name of the running thread. */
@@ -333,6 +340,11 @@ thread_yield (void) {
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
+	struct list_elem *a = list_front(&ready_list);
+	struct thread *ta = list_entry(a, struct thread, elem);
+	if (thread_current()->priority < ta->priority ){
+		thread_yield();
+	}
 }
 
 /* Returns the current thread's priority. */
