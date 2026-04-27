@@ -270,7 +270,7 @@ thread_unblock (struct thread *t) {
 	intr_set_level (old_level);
 
 	// if (need_yield)
-	// 	thread_yield(); yield에서도 인터럽트를 끄기 때문에, 로직이 꼬인듯, create함수에만 추가하기로.
+	// 	thread_yield(); unblock은 인터럽트핸들러에서도 호출되는 함수임. 그래서 unblock에서 yield하면 오류가남. create함수에만 추가하기로.
 }
 
 /* Returns the name of the running thread. */
@@ -443,7 +443,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 
 	memset (t, 0, sizeof *t);
 	t->status = THREAD_BLOCKED;
-	t->wakeup_tick = NULL; // wakeup_tick 초기화 (수정)
+	t->wakeup_tick = 0; // wakeup_tick 초기화 (수정)
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
