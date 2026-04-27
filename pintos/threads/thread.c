@@ -63,7 +63,7 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
-static bool cmp_priority (const struct list_elem *a,
+static bool thread_compare_priority (const struct list_elem *a,
 						  const struct list_elem *b,
 						  void *aux UNUSED);
 
@@ -78,7 +78,7 @@ static bool cmp_priority (const struct list_elem *a,
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
 
 static bool
-cmp_priority (const struct list_elem *a,
+thread_compare_priority (const struct list_elem *a,
 			  const struct list_elem *b,
 			  void *aux UNUSED) {
 	const struct thread *ta = list_entry (a, struct thread, elem);
@@ -261,7 +261,7 @@ thread_unblock (struct thread *t) {
 	// 깨운 스레드를 우선순위 규칙에 맞게 ready_list에 복귀시킨다.
 	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
 	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
-	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+	list_insert_ordered(&ready_list, &t->elem, thread_compare_priority, NULL);
 	t->status = THREAD_READY;
 	// 인터럽트를 다시 켜기 전에, 현재 스레드의 priority랑 비교하는 로직 추가. 그 동안 인터럽트가 발생하면 안되기 때문
 	// if (thread_current()->priority < t->priority)
@@ -333,7 +333,7 @@ thread_yield (void) {
 	if (curr != idle_thread)// idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
 		// 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.	
 		// curr를 ready_list에 되돌릴 때도 list_insert_ordered(..., cmp_priority, ...)를 사용해 priority 순서를 유지해야 한다.
-		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);
+		list_insert_ordered(&ready_list, &curr->elem, thread_compare_priority, NULL);
 	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
@@ -343,10 +343,12 @@ thread_yield (void) {
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
-	struct list_elem *a = list_front(&ready_list);
-	struct thread *ta = list_entry(a, struct thread, elem); 
-	if (thread_current()->priority < ta->priority ){ //priority_change테스트 통과하는 핵심 로직
-		thread_yield();
+	if (!list_empty(&ready_list)){
+		struct list_elem *a = list_front(&ready_list);
+		struct thread *ta = list_entry(a, struct thread, elem); 
+		if (thread_current()->priority < ta->priority ){ //priority_change테스트 통과하는 핵심 로직
+			thread_yield();
+		}
 	}
 }
 
