@@ -215,15 +215,17 @@ void lock_acquire(struct lock *lock)
 	ASSERT(!intr_context());
 	ASSERT(!lock_held_by_current_thread(lock));
 
-	if (lock->holder != NULL){
-		if (thread_current()->priority > lock->holder->priority){
+	if (lock->holder != NULL)
+	{
+		if (thread_current()->priority > lock->holder->priority)
+		{
+			list_push_back(&lock->holder->donations, &thread_current()->donations_elem);
 			lock->holder->priority = thread_current()->priority;
 		}
 	}
 
 	sema_down(&lock->semaphore);
 	lock->holder = thread_current();
-
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -256,8 +258,22 @@ void lock_release(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
 
-	lock->holder->priority=lock->holder->base_priority;
-	
+	// lock->holder->priority=lock->holder->base_priority;
+
+	if (!list_empty(&lock->semaphore.waiters))
+	{
+		struct list_elem *e = list_front(&lock->semaphore.waiters);
+		struct thread *te = list_entry(e, struct thread, elem);
+		list_remove(&te->donations_elem);
+	}
+	lock->holder->priority = lock->holder->base_priority;
+
+	if (!list_empty(&lock->holder->donations))
+	{
+		struct list_elem *a = list_max(&lock->holder->donations, thread_compare_priority, NULL);
+		struct thread *ta = list_entry(a, struct thread, donations_elem);
+		thread_current()->priority = ta->priority;
+	}
 	lock->holder = NULL;
 	sema_up(&lock->semaphore);
 }
@@ -299,7 +315,6 @@ sema_compare_priority(const struct list_elem *a,
 
 	return ta->priority < tb->priority;
 }
-
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
@@ -361,7 +376,8 @@ void cond_signal(struct condition *cond, struct lock *lock UNUSED)
 	ASSERT(!intr_context());
 	ASSERT(lock_held_by_current_thread(lock));
 
-	if (!list_empty(&cond->waiters)){
+	if (!list_empty(&cond->waiters))
+	{
 		struct list_elem *e = list_max(&cond->waiters, sema_compare_priority, NULL);
 		list_remove(e);
 		struct semaphore_elem *sema_elem = list_entry(e, struct semaphore_elem, elem);

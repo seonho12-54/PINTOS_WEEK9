@@ -93,6 +93,8 @@ struct thread {
 	int priority;                       /* Priority. */
 	int base_priority;                  /* 원래 priority를 잠깐 담아둘 변수, priority로 비교할 것이기 때문에*/
 	int64_t wakeup_tick; 
+	struct list donations;
+	struct list_elem donations_elem;
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 

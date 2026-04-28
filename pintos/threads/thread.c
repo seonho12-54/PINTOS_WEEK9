@@ -66,6 +66,8 @@ static tid_t allocate_tid (void);
 static bool thread_compare_priority (const struct list_elem *a,
 						  const struct list_elem *b,
 						  void *aux UNUSED);
+static struct list donations;
+static struct list_elem donations_elem;
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -122,6 +124,7 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -449,6 +452,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->priority = priority;
 	t->base_priority = priority;
 	t->magic = THREAD_MAGIC;
+	list_init(&t->donations);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
