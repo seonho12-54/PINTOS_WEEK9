@@ -40,6 +40,8 @@ static struct lock tid_lock;
 /* Thread destruction requests */
 static struct list destruction_req;
 
+static struct list donations; 
+
 /* Statistics. */
 static long long idle_ticks;    /* # of timer ticks spent idle. */
 static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
@@ -76,8 +78,7 @@ static bool cmp_priority (const struct list_elem *a,
  * somewhere in the middle, this locates the curent thread. */
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
 
-static bool
-cmp_priority (const struct list_elem *a,
+bool compare_priority (const struct list_elem *a,
 			  const struct list_elem *b,
 			  void *aux UNUSED) {
 	const struct thread *ta = list_entry (a, struct thread, elem);
@@ -120,8 +121,8 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
-	list_init (&destruction_req);
-
+	list_init (&destruction_req);	
+	
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -219,6 +220,12 @@ thread_create (const char *name, int priority,
 	/* Add to run queue. */
 	thread_unblock (t);
 
+	// 현재 실행 중인 스레드보다 prioirty가 높은 스레드가 ready queue에 들어와 READY 상태가 되면
+	// 현재 스레드는 CPU를 양보(yield)한다 	
+	if (thread_current()->priority < first_priority_in_queue()) {
+		thread_yield();
+	}
+
 	return tid;
 }
 
@@ -257,7 +264,7 @@ thread_unblock (struct thread *t) {
 	// 깨운 스레드를 우선순위 규칙에 맞게 ready_list에 복귀시킨다.
 	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
 	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
-	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+	list_insert_ordered(&ready_list, &t->elem, compare_priority, NULL);
 	
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
@@ -323,16 +330,25 @@ thread_yield (void) {
 	if (curr != idle_thread)// idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
 		// 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.	
 		// curr를 ready_list에 되돌릴 때도 list_insert_ordered(..., cmp_priority, ...)를 사용해 priority 순서를 유지해야 한다.
-		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);
+		list_insert_ordered(&ready_list, &curr->elem, compare_priority, NULL);
 	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
 
+int first_priority_in_queue(void) {
+	struct thread *t = list_entry(list_front(&ready_list), struct thread, elem); 
+	return t->priority; 
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current()->priority = new_priority;
+
+	if (!list_empty(&ready_list) && new_priority < first_priority_in_queue()) {
+		thread_yield(); 
+	}
 }
 
 /* Returns the current thread's priority. */
@@ -424,12 +440,15 @@ init_thread (struct thread *t, const char *name, int priority) {
 	ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
 	ASSERT (name != NULL);
 
+
 	memset (t, 0, sizeof *t);
 	t->status = THREAD_BLOCKED;
 	t->wakeup_tick = NULL; // wakeup_tick 초기화 (수정)
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
+	t->original_priority = priority;
 	t->priority = priority;
+	list_init (&t->donations); 
 	t->magic = THREAD_MAGIC;
 }
 

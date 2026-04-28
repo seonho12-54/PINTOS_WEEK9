@@ -92,10 +92,13 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 
-	int64_t wakeup_tick; 
+	int64_t wakeup_tick;
+	int original_priority;  
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
-
+	struct list donations; 
+	struct list_elem donation_elem; 
+	
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -141,6 +144,10 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+bool compare_priority (const struct list_elem *a,
+			  const struct list_elem *b,
+			  void *aux);
+
 
 void do_iret (struct intr_frame *tf);
 
