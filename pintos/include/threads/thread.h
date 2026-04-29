@@ -98,7 +98,7 @@ struct thread {
 	struct list_elem elem;              /* List element. */
 	struct list donations; 
 	struct list_elem donation_elem; 
-	
+	struct lock *wait_on_lock;
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */

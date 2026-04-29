@@ -49,13 +49,13 @@ test_priority_donate_multiple (void)
   msg ("Thread b should have just finished.");
   msg ("Main thread should have priority %d.  Actual priority: %d.",
        PRI_DEFAULT + 1, thread_get_priority ());
-  printf("Test 3\n"); 
+
 
   lock_release (&a);
   msg ("Thread a should have just finished.");
   msg ("Main thread should have priority %d.  Actual priority: %d.",
        PRI_DEFAULT, thread_get_priority ());
-  printf("Test 4\n");
+
 }
 
 static void

@@ -16,7 +16,7 @@
 #endif
 
 /* Random value for struct thread's `magic' member.
-   Used to detect stack overflow.  See the big comment at the top
+   Used to detect stack overflo .  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
@@ -84,6 +84,30 @@ bool compare_priority (const struct list_elem *a,
 	const struct thread *ta = list_entry (a, struct thread, elem);
 	const struct thread *tb = list_entry (b, struct thread, elem);
 	return ta->priority > tb->priority;
+}
+
+static bool
+compare_donation_priority (const struct list_elem *a,
+                           const struct list_elem *b,
+                           void *aux UNUSED) {
+    const struct thread *ta = list_entry(a, struct thread, donation_elem);
+    const struct thread *tb = list_entry(b, struct thread, donation_elem);
+
+    return ta->priority < tb->priority;
+}
+
+static int
+highest_donation_priority (struct thread *t) {
+    if (list_empty(&t->donations)) {
+        return t->original_priority;
+    }
+
+    struct list_elem *max = list_max(&t->donations,
+                                     compare_donation_priority,
+                                     NULL);
+    struct thread *donor = list_entry(max, struct thread, donation_elem);
+
+    return donor->priority;
 }
 
 
@@ -341,15 +365,32 @@ int first_priority_in_queue(void) {
 	return t->priority; 
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* original priority만 바꾸고, 실제 실행 priority는 유지 */
 void
 thread_set_priority (int new_priority) {
-	thread_current()->priority = new_priority;
+    struct thread *cur = thread_current ();
 
-	if (!list_empty(&ready_list) && new_priority < first_priority_in_queue()) {
-		thread_yield(); 
-	}
+    cur->original_priority = new_priority;
+
+	// 현재 thread가 donation을 받고 있지 않다면
+    if (list_empty(&cur->donations)) {
+		// 실제 priority를 새 base priority로 바로 변경합니다
+        cur->priority = new_priority;
+    } else {
+		// donation 중 가장 높은 priority 값을 가져옵니다
+        int donated_priority = highest_donation_priority(cur);
+
+		// 실제 priority는 base priority와 donation priority 중 더 큰 값으로 설정합니다
+        cur->priority = new_priority > donated_priority ? new_priority : donated_priority;
+    }
+
+    if (!list_empty(&ready_list) &&
+        cur->priority < first_priority_in_queue()) {
+        thread_yield();
+    }
 }
+
+
 
 /* Returns the current thread's priority. */
 int
@@ -448,6 +489,7 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->original_priority = priority;
 	t->priority = priority;
+	t->wait_on_lock = NULL;
 	list_init (&t->donations); 
 	t->magic = THREAD_MAGIC;
 }
