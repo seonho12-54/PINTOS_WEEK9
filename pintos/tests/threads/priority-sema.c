@@ -22,7 +22,7 @@ test_priority_sema (void)
 
   sema_init (&sema, 0);
   thread_set_priority (PRI_MIN);
-  for (i = 0; i < 10; i++) 
+  for (i = 0; i < 10; i++) //스레드 10개를 만듦 메인은 제일 낮게 만들고
     {
       int priority = PRI_DEFAULT - (i + 3) % 10 - 1;
       char name[16];
