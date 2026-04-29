@@ -54,12 +54,26 @@ sequenceDiagram
 - 규칙 3: `sleep_list`의 head를 기준으로 wake 조건(`wakeup_tick <= 현재 tick`)을 검사한다.
 - 규칙 4: 조건을 만족하는 스레드는 연속 구간 전체를 반복해서 깨운다.
 - 규칙 5: 깨울 때는 리스트 제거 후 `thread_unblock()` 순서로 처리한다.
+- 금지 1: 조건 만족 스레드를 1개만 처리하고 루프를 종료하지 않는다.
+
+구현 체크 순서:
+1. 인터럽트 진입 시 tick을 1 증가시킨다.
+2. `thread_tick()`을 호출해 타임슬라이스 회계를 반영한다.
+3. `sleep_list` head가 wake 조건을 만족하는 동안 반복한다.
+4. 각 반복에서 `pop_front` 후 `thread_unblock()`을 수행한다.
+5. 리스트 head가 조건을 벗어나면 루프를 종료한다.
 
 ### 4.2 `thread_unblock()` 연계 주석
 - 위치: `pintos/threads/thread.c`
 - 역할: interrupt 경로에서 전달된 sleep 스레드를 실행 가능 상태(`READY`)로 전이한다.
 - 규칙 1: `timer_interrupt()`가 전달한 스레드는 `READY` 상태로 전이되어야 한다.
 - 규칙 2: unblock은 실행 보장이 아니라 실행 가능 상태 전이임을 전제로 한다.
+- 금지 1: `thread_unblock()`에서 wake 대상의 수면 메타데이터를 다시 조작하지 않는다.
+
+구현 체크 순서:
+1. interrupt 경로에서 전달된 스레드가 BLOCKED 상태인지 확인한다.
+2. `thread_unblock()`으로 READY 전이를 수행한다.
+3. 실행 순서 결정은 scheduler 정책에 위임한다.
 
 ## 5. 테스팅 방법
 - `alarm-simultaneous`: 동일 tick 다중 깨움 검증

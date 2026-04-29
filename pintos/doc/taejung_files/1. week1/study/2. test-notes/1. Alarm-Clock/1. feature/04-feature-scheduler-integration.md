@@ -44,18 +44,35 @@ stateDiagram-v2
 - 역할: `ready_list` 정렬 삽입에서 "높은 priority가 앞" 규칙을 정의한다.
 - 규칙 1: 비교 기준은 `thread.priority`로 고정한다.
 - 규칙 2: 높은 priority가 먼저 오도록 반환값을 구성한다.
+- 금지 1: Alarm 문맥이라고 해서 별도 비교 기준을 추가하지 않는다.
+
+구현 체크 순서:
+1. `priority` 기준 비교만 수행한다.
+2. ready queue 정렬과 테스트 기대값(`alarm-priority`)이 일치하는지 확인한다.
 
 ### 4.2 `thread_unblock()` ready queue 삽입 정책
 - 위치: `pintos/threads/thread.c`
 - 역할: 깨운 스레드를 우선순위 규칙에 맞게 `ready_list`에 복귀시킨다.
 - 규칙 1: `ready_list` 삽입은 단순 `push_back`이 아니라 `list_insert_ordered(..., cmp_priority, ...)`로 처리한다.
 - 규칙 2: `THREAD_BLOCKED -> THREAD_READY` 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
+- 금지 1: Alarm 경로만 예외로 두고 FIFO 삽입을 허용하지 않는다.
+
+구현 체크 순서:
+1. wake된 스레드를 `list_insert_ordered`로 READY에 넣는다.
+2. 상태 전이를 `THREAD_READY`로 맞춘다.
+3. 인터럽트 레벨 복원을 누락하지 않는다.
 
 ### 4.3 `thread_yield()`의 재삽입 정책
 - 위치: `pintos/threads/thread.c`
 - 역할: 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.
 - 규칙 1: `curr`를 `ready_list`에 되돌릴 때도 `list_insert_ordered(..., cmp_priority, ...)`를 사용해 priority 순서를 유지해야 한다.
 - 규칙 2: idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
+- 금지 1: 양보 경로에서만 `push_back`을 써서 정렬 불변식을 깨지 않는다.
+
+구현 체크 순서:
+1. idle 제외 조건을 확인한다.
+2. 양보 대상 스레드를 ordered insert로 되돌린다.
+3. 스케줄러 전환 후 ready queue head가 정책과 일치하는지 확인한다.
 
 ### 4.4 `timer_interrupt()` 선점 트리거 구현
 - 위치: `pintos/devices/timer.c` (`timer_interrupt()` wake 루프 이후)
@@ -63,6 +80,12 @@ stateDiagram-v2
 - 규칙 1: wake 루프에서 `thread_unblock(t)`를 호출한 직후, `t->priority > thread_current()->priority` 조건을 검사한다.
 - 규칙 2: 위 조건을 만족한 스레드가 하나라도 있으면 `intr_yield_on_return()`을 호출해 인터럽트 복귀 시점 선점을 예약한다.
 - 규칙 3: 인터럽트 컨텍스트에서는 `thread_yield()`를 직접 호출하지 않는다.
+- 금지 1: 인터럽트 핸들러 내부에서 즉시 `thread_yield()`를 호출하지 않는다.
+
+구현 체크 순서:
+1. wake 루프 중 higher-priority wake 여부를 플래그로 누적한다.
+2. 루프 종료 후 플래그가 참이면 `intr_yield_on_return()`을 호출한다.
+3. 선점 예약은 1회만 수행하고 중복 호출로 흐름을 복잡하게 만들지 않는다.
 
 ## 5. 테스팅 방법
 - `alarm-priority`: READY 전이 이후 priority 반영 검증

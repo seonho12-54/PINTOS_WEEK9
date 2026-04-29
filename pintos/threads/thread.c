@@ -16,7 +16,7 @@
 #endif
 
 /* Random value for struct thread's `magic' member.
-   Used to detect stack overflo .  See the big comment at the top
+   Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
@@ -39,8 +39,6 @@ static struct lock tid_lock;
 
 /* Thread destruction requests */
 static struct list destruction_req;
-
-static struct list donations; 
 
 /* Statistics. */
 static long long idle_ticks;    /* # of timer ticks spent idle. */
@@ -78,7 +76,8 @@ static bool cmp_priority (const struct list_elem *a,
  * somewhere in the middle, this locates the curent thread. */
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
 
-bool compare_priority (const struct list_elem *a,
+static bool
+cmp_priority (const struct list_elem *a,
 			  const struct list_elem *b,
 			  void *aux UNUSED) {
 	const struct thread *ta = list_entry (a, struct thread, elem);
@@ -86,36 +85,52 @@ bool compare_priority (const struct list_elem *a,
 	return ta->priority > tb->priority;
 }
 
-static bool
-compare_donation_priority (const struct list_elem *a,
-                           const struct list_elem *b,
-                           void *aux UNUSED) {
-    const struct thread *ta = list_entry(a, struct thread, donation_elem);
-    const struct thread *tb = list_entry(b, struct thread, donation_elem);
-
-    return ta->priority < tb->priority;
+void
+try_preempt_current (void) {
+	// ready_list가 비어있으면 즉시 반환한다.
+	if(list_empty(&ready_list)) {
+		return;
+	}
+	struct thread *next = list_entry(list_front(&ready_list), struct thread, elem);
+	struct thread *curr = thread_current();
+	// list_front(&ready_list)의 priority와 현재 스레드 priority를 비교해 선점 여부를 결정한다.
+	if (next->priority > curr->priority) {
+		// 인터럽트 컨텍스트면 intr_yield_on_return(), 스레드 컨텍스트면 thread_yield()를 사용한다.
+		if(intr_context()){
+			intr_yield_on_return();
+		}
+		else {
+			thread_yield();
+		}
+	}	
 }
 
-static int
-highest_donation_priority (struct thread *t) {
-    if (list_empty(&t->donations)) {
-        return t->original_priority;
-    }
+// synch.c에서 호출할 수 있도록 헤더에 프로토타입을 선언한다.
+void thread_recalculate_priority(struct thread *t){
 
-    struct list_elem *max = list_max(&t->donations,
-                                     compare_donation_priority,
-                                     NULL);
-    struct thread *donor = list_entry(max, struct thread, donation_elem);
+	// 계산 기준은 max(base_priority, donations 최대 priority)로 통일한다.
+	int max_priority = t->base_priority;
+	struct list_elem *elem;
+	
+	// donation 리스트 순회 시 list_entry(e, struct thread, donation_elem) 기준을 사용한다.
+	for(elem = list_begin(&t->donation_candidates); elem != list_end(&t->donation_candidates); elem = list_next(elem)){
+		struct thread *donor = list_entry(elem, struct thread, donation_elem);
+		if(donor->effective_priority > max_priority){
+			max_priority = donor->effective_priority;
+		}
+	}
 
-    return donor->priority;
+	// 계산 결과를 base_priority: 원래값
+    // effective_priority: donation 반영값
+    // priority: 스케줄러/비교/ready list에서 실제 참조하는 값(= effective_priority와 항상 동일)
+	t->effective_priority = max_priority;
+	t->priority = max_priority;
 }
-
 
 // Global descriptor table for the thread_start.
 // Because the gdt will be setup after the thread_init, we should
 // setup temporal gdt first.
 static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
-
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -145,8 +160,8 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
-	list_init (&destruction_req);	
-	
+	list_init (&destruction_req);
+
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
 	init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -242,14 +257,12 @@ thread_create (const char *name, int priority,
 	t->tf.eflags = FLAG_IF;
 
 	/* Add to run queue. */
+	// 생성 경로에서 삽입 정책을 중복 구현하지 않고 thread_unblock()으로 위임한다.
 	thread_unblock (t);
-
-	// 현재 실행 중인 스레드보다 prioirty가 높은 스레드가 ready queue에 들어와 READY 상태가 되면
-	// 현재 스레드는 CPU를 양보(yield)한다 	
-	if (thread_current()->priority < first_priority_in_queue()) {
-		thread_yield();
-	}
-
+	
+	// thread_unblock(t) 직후 helper(try_preempt_current)를 호출한다.
+	try_preempt_current();
+	
 	return tid;
 }
 
@@ -278,20 +291,22 @@ thread_block (void) {
    update other data. */
 void
 thread_unblock (struct thread *t) {
-	enum intr_level old_level;
+	enum intr_level old_level; // 인터럽트 레벨을 저장하기 위한 변수
 
-	ASSERT (is_thread (t));
+	ASSERT (is_thread (t)); // 스레드 유효성 검사
 
-	old_level = intr_disable ();
-	ASSERT (t->status == THREAD_BLOCKED);
+	old_level = intr_disable (); // 인터럽트 비활성화
+	ASSERT (t->status == THREAD_BLOCKED); // 스레드 상태 검사
 
 	// 깨운 스레드를 우선순위 규칙에 맞게 ready_list에 복귀시킨다.
 	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
 	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
-	list_insert_ordered(&ready_list, &t->elem, compare_priority, NULL);
+	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+
+	t->status = THREAD_READY; // 스레드 상태를 READY로 변경
+
 	
-	t->status = THREAD_READY;
-	intr_set_level (old_level);
+	intr_set_level (old_level); // 인터럽트 레벨을 원래 상태로 복원
 }
 
 /* Returns the name of the running thread. */
@@ -354,43 +369,24 @@ thread_yield (void) {
 	if (curr != idle_thread)// idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
 		// 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.	
 		// curr를 ready_list에 되돌릴 때도 list_insert_ordered(..., cmp_priority, ...)를 사용해 priority 순서를 유지해야 한다.
-		list_insert_ordered(&ready_list, &curr->elem, compare_priority, NULL);
+		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);
 	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
 
-int first_priority_in_queue(void) {
-	struct thread *t = list_entry(list_front(&ready_list), struct thread, elem); 
-	return t->priority; 
-}
-
-/* original priority만 바꾸고, 실제 실행 priority는 유지 */
+/* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-    struct thread *cur = thread_current ();
+	// base priority를 갱신한다.
+	thread_current()->base_priority = new_priority;
 
-    cur->original_priority = new_priority;
+	// thread_recalculate_priority()를 호출해 effective를 정합시킨다.
+	thread_recalculate_priority(thread_current());
 
-	// 현재 thread가 donation을 받고 있지 않다면
-    if (list_empty(&cur->donations)) {
-		// 실제 priority를 새 base priority로 바로 변경합니다
-        cur->priority = new_priority;
-    } else {
-		// donation 중 가장 높은 priority 값을 가져옵니다
-        int donated_priority = highest_donation_priority(cur);
-
-		// 실제 priority는 base priority와 donation priority 중 더 큰 값으로 설정합니다
-        cur->priority = new_priority > donated_priority ? new_priority : donated_priority;
-    }
-
-    if (!list_empty(&ready_list) &&
-        cur->priority < first_priority_in_queue()) {
-        thread_yield();
-    }
+	// base priority 갱신 직후 helper(try_preempt_current)를 호출해 선점 여부를 통일 판단한다.
+	try_preempt_current();
 }
-
-
 
 /* Returns the current thread's priority. */
 int
@@ -481,17 +477,20 @@ init_thread (struct thread *t, const char *name, int priority) {
 	ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
 	ASSERT (name != NULL);
 
-
 	memset (t, 0, sizeof *t);
 	t->status = THREAD_BLOCKED;
-	t->wakeup_tick = NULL; // wakeup_tick 초기화 (수정)
+	t->wakeup_tick = 0; // wakeup_tick 초기화
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
-	t->original_priority = priority;
 	t->priority = priority;
-	t->wait_on_lock = NULL;
-	list_init (&t->donations); 
 	t->magic = THREAD_MAGIC;
+	// init_thread()에서 base/effective, wait_on_lock, donation 리스트를 초기화한다.
+	t->base_priority = priority;
+	t->effective_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init(&t->donation_candidates); // donation 리스트를 초기화한다.
+	// in_donation_list를 false로 초기화한다.
+	t->in_donation_list = false;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

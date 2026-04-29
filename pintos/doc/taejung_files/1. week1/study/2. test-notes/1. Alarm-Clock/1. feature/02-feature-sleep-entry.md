@@ -58,6 +58,12 @@ sequenceDiagram
 - 규칙 1: `sleep_list`는 `static struct list sleep_list;` 형태로 타이머 모듈 내부에 선언한다.
 - 규칙 2: 이 리스트에는 sleep 중인 스레드만 들어가고, ready/running 스레드는 포함하지 않는다.
 - 규칙 3: 리스트 정렬 불변식은 `wakeup_tick` 오름차순으로 유지한다.
+- 금지 1: 스레드를 sleep_list와 ready_list에 동시에 두지 않는다.
+
+구현 체크 순서:
+1. `timer.c`에 `sleep_list`를 모듈 내부 정적 변수로 선언한다.
+2. 리스트 원소는 sleep 상태 스레드만 담도록 경계를 유지한다.
+3. wakeup 기준 정렬 불변식(`wakeup_tick` 오름차순)을 문서와 코드에서 일치시킨다.
 
 ### 4.2 `timer_init()` 구현 주석
 - 위치: `pintos/devices/timer.c`
@@ -65,6 +71,12 @@ sequenceDiagram
 - 규칙 1: `sleep_list`는 사용 전에 반드시 `list_init(&sleep_list)`로 초기화한다.
 - 규칙 2: 이 초기화는 타이머 모듈 초기화 시점(`timer_init`)에 1회 수행한다.
 - 규칙 3: 인터럽트 핸들러 등록 전에 리스트 초기화를 끝내 일관된 상태를 보장한다.
+- 금지 1: 지연 초기화(lazy init)로 첫 `timer_sleep()` 호출 시점까지 미루지 않는다.
+
+구현 체크 순서:
+1. `timer_init()` 초기에 `list_init(&sleep_list)`를 수행한다.
+2. 인터럽트 핸들러 등록 전에 리스트 초기화를 완료한다.
+3. 중복 초기화로 리스트 상태가 깨지지 않는지 확인한다.
 
 ### 4.3 `timer_sleep()` 구현 주석
 - 위치: `pintos/devices/timer.c`
@@ -75,12 +87,26 @@ sequenceDiagram
 - 규칙 4: 현재 스레드는 `sleep_list`에 `wakeup_tick` 기준 오름차순으로 삽입한다.
 - 규칙 5: 등록이 끝난 스레드는 `thread_block()`으로 `BLOCKED` 상태로 전이한다.
 - 규칙 6: 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
+- 금지 1: busy wait(`thread_yield` 루프) 방식으로 지연 구현하지 않는다.
+
+구현 체크 순서:
+1. `ticks <= 0` 입력을 먼저 빠르게 반환한다.
+2. 인터럽트를 비활성화하고 `wakeup_tick = timer_ticks() + ticks`를 계산한다.
+3. `sleep_list`에 정렬 삽입한다.
+4. `thread_block()`으로 현재 스레드를 BLOCKED로 전이한다.
+5. 인터럽트 레벨을 원래 상태로 복원한다.
 
 ### 4.4 `thread_compare_wakeup()` 구현 주석
 - 위치: `pintos/devices/timer.c`
 - 역할: `sleep_list` 정렬 규칙(`wakeup_tick` 오름차순)을 유지하는 비교를 제공한다.
 - 규칙 1: 비교 기준은 오직 `wakeup_tick` 값으로 한다.
 - 규칙 2: 더 이른 tick에 깨어나야 할 스레드가 앞에 오도록 true/false를 반환한다.
+- 금지 1: 비교 함수에서 priority 등 wakeup과 무관한 기준을 섞지 않는다.
+
+구현 체크 순서:
+1. 두 스레드의 `wakeup_tick`을 읽는다.
+2. 더 작은 `wakeup_tick`이 앞에 오도록 반환값을 구성한다.
+3. 동점 처리 정책이 전체 wake 루프와 충돌하지 않는지 확인한다.
 
 ### 4.5 범위 경계 메모 (02 -> 03 연계)
 - `timer_interrupt()`의 wake-up 실행 상세는 `03-feature-wakeup-execution-on-tick.md`의 구현 범위다.
