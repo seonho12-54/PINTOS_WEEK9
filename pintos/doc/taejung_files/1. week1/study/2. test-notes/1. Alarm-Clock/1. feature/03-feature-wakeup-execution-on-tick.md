@@ -1,4 +1,4 @@
-# 04 — 기능 3: tick 기반 깨우기 실행 (Wake-up Execution)
+# 03 — 기능 2: tick 기반 깨우기 실행 (Wake-up Execution)
 
 ## 1. 구현 목적 및 필요성
 ### 이 기능이 무엇인가

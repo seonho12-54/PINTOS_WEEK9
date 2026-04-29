@@ -63,6 +63,9 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
+static bool cmp_priority (const struct list_elem *a,
+						  const struct list_elem *b,
+						  void *aux UNUSED);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -73,6 +76,15 @@ static tid_t allocate_tid (void);
  * always at the beginning of a page and the stack pointer is
  * somewhere in the middle, this locates the curent thread. */
 #define running_thread() ((struct thread *) (pg_round_down (rrsp ())))
+
+static bool
+cmp_priority (const struct list_elem *a,
+			  const struct list_elem *b,
+			  void *aux UNUSED) {
+	const struct thread *ta = list_entry (a, struct thread, elem);
+	const struct thread *tb = list_entry (b, struct thread, elem);
+	return ta->priority > tb->priority;
+}
 
 
 // Global descriptor table for the thread_start.
@@ -117,16 +129,6 @@ thread_init (void) {
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
 }
-
-static bool
-priority_compare (const struct list_elem *a_, const struct list_elem *b_,
-		void *aux UNUSED) {
-	struct thread *a = list_entry(a_, struct thread, elem);
-	struct thread *b = list_entry(b_, struct thread, elem);
-
-	return a->priority > b->priority;
-}
-
 
 /* Starts preemptive thread scheduling by enabling interrupts.
    Also creates the idle thread. */
@@ -238,12 +240,6 @@ thread_block (void) {
 }
 
 
-
-
-
-
-
-
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -261,9 +257,11 @@ thread_unblock (struct thread *t) {
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
 
-	list_insert_ordered(&ready_list, &t -> elem, priority_compare, NULL);
-
-
+	// 깨운 스레드를 우선순위 규칙에 맞게 ready_list에 복귀시킨다.
+	// ready_list 삽입은 단순 push_back이 아니라 list_insert_ordered(..., cmp_priority, ...)로 처리한다.
+	// THREAD_BLOCKED -> THREAD_READY 전이는 기존처럼 인터럽트 비활성 구간에서 수행한다.
+	list_insert_ordered(&ready_list, &t->elem, cmp_priority, NULL);
+	
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 
@@ -328,8 +326,11 @@ thread_yield (void) {
 
 
 	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_insert_ordered(&ready_list, &curr->elem, priority_compare, NULL);
+	if (curr != idle_thread)// idle thread는 기존과 동일하게 ready queue 삽입 대상에서 제외한다.
+		// 현재 실행 스레드가 양보할 때도 ready queue의 priority 규칙을 깨지 않게 유지한다.	
+		// curr를 ready_list에 되돌릴 때도 list_insert_ordered(..., cmp_priority, ...)를 사용해 priority 순서를 유지해야 한다.
+		list_insert_ordered(&ready_list, &curr->elem, cmp_priority, NULL);
+	
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }

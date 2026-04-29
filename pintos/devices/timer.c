@@ -32,13 +32,14 @@ static void real_time_sleep (int64_t num, int32_t denom);
 // list.h에 있는 구조체를 활용하여 queue(linked_list) 방식으로 구현 
 static struct list sleep_list; 
 
-static bool compare_wakeup_tick(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
-	const struct thread *thread_a = list_entry(a, struct thread, elem);
-	const struct thread *thread_b = list_entry(b, struct thread, elem);
-	return thread_a->wakeup_tick < thread_b->wakeup_tick;
+static bool
+thread_compare_wakeup (const struct list_elem *a,
+		const struct list_elem *b,
+		void *aux UNUSED) {
+	const struct thread *ta = list_entry (a, struct thread, elem);
+	const struct thread *tb = list_entry (b, struct thread, elem);
+	return ta->wakeup_tick < tb->wakeup_tick;
 }
-
-
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
    corresponding interrupt. */
@@ -54,6 +55,10 @@ timer_init (void) {
 	outb (0x40, count & 0xff);
 	outb (0x40, count >> 8);
 
+	// sleep_list는 사용 전에 반드시 list_init(&sleep_list)로 초기화한다.
+	// 이 초기화는 타이머 모듈 초기화 시점(timer_init)에 1회 수행한다.
+	// 인터럽트 핸들러 등록 전에 리스트 초기화를 끝내 일관된 상태를 보장한다.
+	list_init (&sleep_list);
 	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 }
 
@@ -102,29 +107,32 @@ timer_elapsed (int64_t then) {
 /* Suspends execution for approximately TICKS timer ticks. */
 void
 timer_sleep (int64_t ticks) {	
+	// ticks <= 0이면 상태를 바꾸지 않고 즉시 반환한다.
 	if (ticks <= 0) {
 		return; 
 	}
 
-	ASSERT (intr_get_level () == INTR_ON); // 인터럽트가 켜져 있는지 검사 후 아닐 경우 에러
+	// 인터럽트가 켜져 있는지 검사 후 아닐 경우 에러 발생
+	ASSERT (intr_get_level () == INTR_ON); 
 
+    // sleep 등록부터 block까지는 인터럽트 경합이 없도록 원자 구간에서 처리한다.
 	enum intr_level old_level = intr_disable();
 	int64_t start = timer_ticks();
 
-	// 1. 깨어날 시간 계산 (wakeup_tick = current_tick + ticks)	
+	// wakeup_tick은 "현재 tick + 요청 tick"으로 계산해 현재 스레드에 기록한다.
 	struct thread *cur = thread_current();
 	cur->wakeup_tick = start + ticks; 
 	
-	// 2. sleep_list에 현재 스레드 삽입
-	list_insert_ordered(&sleep_list, &cur->elem, compare_wakeup_tick, NULL);
-	//일단 전부다 넣어넣고 이렇게 되면 순서없이 쌓인다.
-	//
-    // 3. thread_block();
-	thread_block();
-	intr_set_level(old_level); 
+	// 현재 스레드는 sleep_list에 wakeup_tick 기준 오름차순으로 삽입한다.
+	list_insert_ordered(&sleep_list, &cur->elem, thread_compare_wakeup, NULL);
+
+    // 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
+	thread_block(); // 등록이 끝난 스레드는 thread_block()으로 BLOCKED 상태로 전이한다.
+	intr_set_level(old_level); // 함수 종료 전에 인터럽트 레벨을 원래 상태로 복원한다.
 	
- 	// while (timer_elapsed (start) < ticks)
-	// 	thread_yield ();
+	// busy-wait 방식으로 구현할 경우 아래와 같이 구현할 수 있다.
+ 	// while (timer_elapsed (start) < ticks) // 현재 시간과 깨어날 시간의 차이가 ticks보다 작으면 루프를 돈다.
+	//   thread_yield(); // 양보 후 다시 검사하는 방식으로 구현할 수 있다. 이 방식은 비효율적이지만 인터럽트 경합을 방지할 수 있다.
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -154,17 +162,18 @@ timer_print_stats (void) {
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
+	// 매 인터럽트마다 전역 tick을 증가시키고 scheduler tick 갱신을 수행한다.
 	ticks++;
-	struct list_elem *e = list_begin(&sleep_list);
-	while (e != list_end(&sleep_list)) {
-		struct thread *t = list_entry(e, struct thread, elem);
-		if (t->wakeup_tick > ticks) {
-			break; // 아직 깨워야 할 스레드가 남아있다면 반복문
-		}
-		e = list_remove(e); // 깨워야 할 스레드가 없으면 리스트
-		thread_unblock(t); // 스레드 깨우기
+	thread_tick (); // 스레드 틱 증가
+
+	// sleep_list의 head부터 검사해 wakeup_tick <= 현재 tick인 스레드를 깨운다.
+	// 조건을 만족하는 스레드는 하나만이 아니라 연속 구간 전체를 반복 처리한다.
+	while (!list_empty (&sleep_list)
+		&& list_entry (list_front (&sleep_list), struct thread, elem)->wakeup_tick <= ticks) {
+		// 깨울 때는 리스트에서 제거한 뒤 thread_unblock()으로 READY 전이한다.
+		struct thread *t = list_entry (list_pop_front (&sleep_list), struct thread, elem);
+		thread_unblock (t);
 	}
-	thread_tick ();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
